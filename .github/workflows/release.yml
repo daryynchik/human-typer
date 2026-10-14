@@ -1,0 +1,56 @@
+name: Build apps
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: macOS-arm64
+          - os: macos-15-intel
+            artifact: macOS-x64
+          - os: windows-latest
+            artifact: Windows-x64
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install ".[dev]"
+      - run: python -m pytest -q
+      - run: python scripts/build.py
+      - name: Archive macOS application
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/Human Typer.app" "dist/Human-Typer-${{ matrix.artifact }}.zip"
+      - name: Archive Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path 'dist/Human Typer.exe' -DestinationPath 'dist/Human-Typer-${{ matrix.artifact }}.zip'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Human-Typer-${{ matrix.artifact }}
+          path: dist/*.zip
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*.zip --repo "$GITHUB_REPOSITORY" --title "Human Typer $GITHUB_REF_NAME" --notes "Готовые сборки для Windows x64, macOS Intel и Apple Silicon. На macOS разрешите Универсальный доступ и, если нужно, Мониторинг ввода. Сборки без сертификата подписи. Инструкция запуска — в README."
