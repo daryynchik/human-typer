@@ -35,6 +35,9 @@ def test_mac_emoji_uses_two_utf16_units_and_balanced_events():
     assert all(e["unicode"] == (2, "🙂") for e in keyboard.q.events)
     keyboard.newline(True)
     assert all(e["flags"] == 1 for e in keyboard.q.events[-2:])
+    keyboard.move("left")
+    keyboard.move("right")
+    assert [e["code"] for e in keyboard.q.events[-4:]] == [123, 123, 124, 124]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows native ABI")
@@ -55,3 +58,6 @@ def test_windows_input_layout_and_unicode_surrogates():
     assert events == [(0, 0xD83D, 4), (0, 0xD83D, 6), (0, 0xDE42, 4), (0, 0xDE42, 6)]
     keyboard.newline(True)
     assert events[-4:] == [(0x10, 0, 0), (0x0D, 0, 0), (0x0D, 0, 2), (0x10, 0, 2)]
+    keyboard.move("left")
+    keyboard.move("right")
+    assert events[-4:] == [(0x25, 0, 1), (0x25, 0, 3), (0x27, 0, 1), (0x27, 0, 3)]

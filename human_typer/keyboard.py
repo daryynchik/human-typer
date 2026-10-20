@@ -72,6 +72,9 @@ class MacKeyboard:
     def newline(self, soft: bool) -> None:
         self._key(36, shift=soft)
 
+    def move(self, direction: str) -> None:
+        self._key({"left": 123, "right": 124}[direction])
+
 
 class WindowsKeyboard:
     HOTKEYS: ClassVar = {"start": 0x75, "pause": 0x77, "stop": 0x78}
@@ -174,6 +177,10 @@ class WindowsKeyboard:
         if soft:
             events = [self._input(0x10), *events, self._input(0x10, flags=2)]
         self._send(events)
+
+    def move(self, direction: str) -> None:
+        vk = {"left": 0x25, "right": 0x27}[direction]
+        self._send([self._input(vk, flags=1), self._input(vk, flags=3)])
 
 
 def create_keyboard():

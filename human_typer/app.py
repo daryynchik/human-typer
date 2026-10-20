@@ -9,22 +9,29 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from . import __version__
 from .engine import Settings, State, TypingEngine
 from .keyboard import create_keyboard
+from .scenario import EXAMPLE, HELP, compile_program
 
 STYLE = """
 QWidget { background: #101724; color: #e8edf5; font-size: 13px; }
@@ -78,10 +85,10 @@ def app_icon() -> QIcon:
 class MainWindow(QWidget):
     def __init__(self, keyboard=None, demo: bool = False) -> None:
         super().__init__()
-        self.setWindowTitle("Human Typer")
+        self.setWindowTitle(f"Human Typer {__version__}")
         self.setWindowIcon(app_icon())
-        self.setMinimumWidth(440)
-        self.resize(470, 680)
+        self.setMinimumSize(510, 640)
+        self.resize(580, 800)
         self.store = QSettings("HumanTyper", "HumanTyper")
         self.engine = TypingEngine(keyboard or create_keyboard())
         self.previous_hotkeys: set[str] = set()
@@ -100,14 +107,22 @@ class MainWindow(QWidget):
         self._render()
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(22, 20, 22, 18)
         layout.setSpacing(12)
         header = QHBoxLayout()
         titles = QVBoxLayout()
         title = QLabel("Human Typer")
         title.setObjectName("brand")
-        subtitle = QLabel("Ваш текст. Живой ритм.")
+        subtitle = QLabel("От черновика к готовому тексту · 2.0")
         subtitle.setObjectName("muted")
         titles.addWidget(title)
         titles.addWidget(subtitle)
@@ -128,16 +143,57 @@ class MainWindow(QWidget):
         self.load_button.clicked.connect(self._load_clipboard)
         source_row.addWidget(self.load_button)
         layout.addLayout(source_row)
+        mode_row = QHBoxLayout()
+        self.mode = QComboBox()
+        self.mode.addItems(["Обычный текст", "Сценарий с правками"])
+        self.mode.setCurrentIndex(1)
+        self.mode.setToolTip("В сценарии команды [[…]] управляют правками и паузами.")
+        self.mode.currentIndexChanged.connect(self._settings_changed)
+        mode_row.addWidget(self.mode, 1)
+        self.commands_button = QPushButton("Команды")
+        commands_menu = QMenu(self.commands_button)
+        for label, notation in (
+            ("Пауза на 2 секунды", "[[пауза:2]]"),
+            ("Удалить 1 слово", "[[слова:1]]"),
+            ("Удалить 1 предложение", "[[предложения:1]]"),
+            ("Удалить 5 символов", "[[стереть:5]]"),
+            ("Заменить написанный фрагмент", "[[заменить:старое=>новое]]"),
+            ("Сменить скорость", "[[скорость:180]]"),
+        ):
+            commands_menu.addAction(
+                label, lambda _checked=False, text=notation: self._insert_command(text)
+            )
+        commands_menu.addSeparator()
+        commands_menu.addAction("Справка по сценариям", self._show_help)
+        self.commands_button.setMenu(commands_menu)
+        mode_row.addWidget(self.commands_button)
+        self.example_button = QPushButton("Пример")
+        self.example_button.clicked.connect(self._load_example)
+        mode_row.addWidget(self.example_button)
+        layout.addLayout(mode_row)
         self.editor = QPlainTextEdit()
+        self.editor.setMaximumBlockCount(0)
         self.editor.setPlaceholderText(
-            "Скопируйте текст и нажмите «Старт».\nИли напишите текст прямо здесь."
+            "Пишите черновик и добавляйте команды:\n"
+            "Это плохой[[слова:1]]первый вариант.\n"
+            "[[пауза:2]][[заменить:первый=>продуманный]]\n\n"
+            "Кнопка «Пример» покажет готовый сценарий."
         )
         self.editor.setMinimumHeight(135)
         self.editor.textChanged.connect(self._text_edited)
         layout.addWidget(self.editor, 1)
-        self.count = QLabel("Текст хранится только в памяти")
+        info_row = QHBoxLayout()
+        self.count = QLabel("Без лимита длины · только в памяти")
         self.count.setObjectName("muted")
-        layout.addWidget(self.count)
+        self.count.setWordWrap(True)
+        info_row.addWidget(self.count, 1)
+        self.file_button = QPushButton("Файл…")
+        self.file_button.clicked.connect(self._load_file)
+        self.preview_button = QPushButton("Итог и план")
+        self.preview_button.clicked.connect(self._preview)
+        info_row.addWidget(self.file_button)
+        info_row.addWidget(self.preview_button)
+        layout.addLayout(info_row)
 
         card = QFrame()
         card.setObjectName("card")
@@ -145,7 +201,7 @@ class MainWindow(QWidget):
         options.setContentsMargins(14, 12, 14, 12)
         options.setSpacing(10)
         speed_row = QHBoxLayout()
-        speed_row.addWidget(QLabel("Скорость"))
+        speed_row.addWidget(QLabel("Скорость печати · это не лимит текста"))
         speed_row.addStretch()
         self.speed_value = QLabel()
         self.speed_value.setObjectName("value")
@@ -182,7 +238,7 @@ class MainWindow(QWidget):
         self.typos.setSuffix(" %")
         self.typos.setValue(2)
         self.delete = QSpinBox()
-        self.delete.setRange(0, 10000)
+        self.delete.setRange(0, 2147483647)
         self.delete.setToolTip("Столько нажатий Backspace будет отправлено перед вводом.")
         self.countdown = QSpinBox()
         self.countdown.setRange(1, 15)
@@ -250,7 +306,7 @@ class MainWindow(QWidget):
     def _text_edited(self) -> None:
         if not self.programmatic_text:
             self.clipboard_source.setChecked(False)
-        self.count.setText(f"{len(self.editor.toPlainText())} символов · только в памяти")
+        self.count.setText(f"{len(self.editor.toPlainText()):,} символов · без лимита длины")
 
     def _set_text(self, text: str) -> None:
         self.programmatic_text = True
@@ -261,8 +317,97 @@ class MainWindow(QWidget):
         if not self.engine.active:
             self._set_text(QApplication.clipboard().text())
 
+    def _insert_command(self, text: str) -> None:
+        self.mode.setCurrentIndex(1)
+        self.editor.insertPlainText(text)
+        self.editor.setFocus()
+
+    def _load_example(self) -> None:
+        if self.editor.toPlainText():
+            answer = QMessageBox.question(
+                self, "Загрузить пример", "Заменить текст в окне готовым примером?"
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.mode.setCurrentIndex(1)
+        self.clipboard_source.setChecked(False)
+        self._set_text(EXAMPLE)
+
+    def _load_file(self) -> None:
+        from pathlib import Path
+
+        name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Открыть сценарий или текст",
+            "",
+            "Текст UTF-8 (*.txt *.md *.htype);;Все файлы (*)",
+        )
+        if name:
+            try:
+                text = Path(name).read_text(encoding="utf-8-sig")
+                self.clipboard_source.setChecked(False)
+                self._set_text(text)
+            except (OSError, UnicodeError) as exc:
+                QMessageBox.warning(self, "Не удалось открыть файл", str(exc))
+
+    def _show_help(self) -> None:
+        self._text_dialog("Команды сценария", [("Справка", HELP)])
+
+    def _text_dialog(self, title: str, pages: list[tuple[str, str]], summary: str = "") -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(680, 560)
+        layout = QVBoxLayout(dialog)
+        if summary:
+            label = QLabel(summary)
+            label.setWordWrap(True)
+            layout.addWidget(label)
+        tabs = QTabWidget()
+        for name, text in pages:
+            editor = QPlainTextEdit()
+            editor.setMaximumBlockCount(0)
+            editor.setReadOnly(True)
+            editor.setPlainText(text)
+            tabs.addTab(editor, name)
+        layout.addWidget(tabs)
+        close = QPushButton("Закрыть")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec()
+
+    def _preview(self) -> None:
+        try:
+            if self.clipboard_source.isChecked():
+                self._load_clipboard()
+            program = compile_program(self.editor.toPlainText(), self.mode.currentIndex() == 1)
+            names = {
+                "type": "Напечатать",
+                "erase": "Удалить символов",
+                "left": "Влево",
+                "right": "Вправо",
+                "wait": "Пауза, сек",
+                "speed": "Скорость, симв/мин",
+            }
+            lines = []
+            for i, action in enumerate(program.actions, 1):
+                detail = repr(action.text[:120]) if action.kind == "type" else f"{action.number:g}"
+                if action.kind == "type" and len(action.text) > 120:
+                    detail += f" … ({len(action.text):,} символов)"
+                lines.append(f"{i}. {names[action.kind]}: {detail}")
+            self._text_dialog(
+                "Итог и план сценария",
+                [("Итоговый текст", program.final_text), ("Порядок действий", "\n".join(lines))],
+                f"Команд: {program.command_count} · действий: {program.total_steps:,} · "
+                f"в итоге: {len(program.final_text):,} символов. "
+                "Итог рассчитан для точного ввода без автокоррекции целевого редактора.",
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Ошибка сценария", str(exc))
+
     def _settings_changed(self, *_args) -> None:
         s = self.engine.settings
+        if s.cpm != self.speed.value():
+            self.engine.script_cpm = None
         s.cpm = self.speed.value()
         s.variation = self.variation.value() / 100
         s.typo_rate = self.typos.value() / 100
@@ -270,6 +415,7 @@ class MainWindow(QWidget):
         s.delete_before = self.delete.value()
         s.countdown = self.countdown.value()
         s.soft_newlines = self.newlines.currentIndex() == 0
+        s.script_mode = self.mode.currentIndex() == 1
         self.speed_value.setText(f"{s.cpm} симв/мин")
 
     def _restore(self) -> None:
@@ -294,6 +440,7 @@ class MainWindow(QWidget):
             0 if self.store.value("soft_newlines", True, type=bool) else 1
         )
         self.topmost.setChecked(self.store.value("topmost", False, type=bool))
+        self.mode.setCurrentIndex(1 if self.store.value("script_mode", True, type=bool) else 0)
 
     def _toggle_topmost(self, on: bool) -> None:
         self.engine.pause("Пауза · изменены настройки окна")
@@ -353,14 +500,19 @@ class MainWindow(QWidget):
         self.clipboard_source.setEnabled(not active)
         self.delete.setEnabled(not active)
         self.newlines.setEnabled(not active)
+        self.mode.setEnabled(not active)
+        self.commands_button.setEnabled(not active)
+        self.example_button.setEnabled(not active)
+        self.file_button.setEnabled(not active)
+        self.preview_button.setEnabled(not active)
         if e.state == State.COUNTDOWN:
             text = f"Старт через {math.ceil(e.seconds_left)} сек · {e.message}"
         elif e.text:
-            text = f"{e.message} · {e.position} / {len(e.text)}"
+            text = f"{e.message} · {e.position:,} / {e.total_steps:,} действий"
         else:
             text = e.message
         self.status.setText(text)
-        self.progress.setValue(round(1000 * e.position / len(e.text)) if e.text else 0)
+        self.progress.setValue(round(1000 * e.position / e.total_steps) if e.total_steps else 0)
 
     def closeEvent(self, event) -> None:
         self.timer.stop()

@@ -3,6 +3,7 @@ import random
 import pytest
 
 from human_typer.engine import Settings, State, TypingEngine, normalize_text
+from human_typer.scenario import graphemes
 
 
 class FakeClock:
@@ -14,6 +15,15 @@ class FakeClock:
 
 
 class FakeKeyboard:
+    @property
+    def buffer(self):
+        return self._buffer
+
+    @buffer.setter
+    def buffer(self, value):
+        self._buffer = value
+        self.cursor = len(value)
+
     def __init__(self):
         self.pid = 22
         self.modified = False
@@ -38,15 +48,31 @@ class FakeKeyboard:
         if self.fail:
             raise OSError("input blocked")
         self.events.append(("write", text))
-        self.buffer += text
+        self._buffer = self.buffer[: self.cursor] + text + self.buffer[self.cursor :]
+        self.cursor += len(text)
 
     def backspace(self):
         self.events.append(("backspace", ""))
-        self.buffer = self.buffer[:-1]
+        clusters = list(graphemes(self.buffer[: self.cursor]))
+        if clusters:
+            size = len(clusters[-1])
+            self._buffer = self.buffer[: self.cursor - size] + self.buffer[self.cursor :]
+            self.cursor -= size
 
     def newline(self, soft):
         self.events.append(("newline", soft))
-        self.buffer += "\n"
+        self._buffer = self.buffer[: self.cursor] + "\n" + self.buffer[self.cursor :]
+        self.cursor += 1
+
+    def move(self, direction):
+        self.events.append((direction, ""))
+        if direction == "left":
+            clusters = list(graphemes(self.buffer[: self.cursor]))
+            if clusters:
+                self.cursor -= len(clusters[-1])
+        else:
+            cluster = next(graphemes(self.buffer[self.cursor :]), "")
+            self.cursor += len(cluster)
 
 
 def setup_engine(**settings):
@@ -72,7 +98,7 @@ def test_unicode_and_normalization_preserve_final_text():
     e.start(text)
     finish(e, c)
     assert k.buffer == normalize_text(text)
-    assert e.position == len(e.text)
+    assert e.position == e.total_steps
     assert ("newline", True) in k.events
 
 

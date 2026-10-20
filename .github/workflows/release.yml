@@ -46,6 +46,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -53,4 +54,4 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/*.zip --repo "$GITHUB_REPOSITORY" --title "Human Typer $GITHUB_REF_NAME" --notes "Готовые сборки для Windows x64, macOS Intel и Apple Silicon. На macOS разрешите Универсальный доступ и, если нужно, Мониторинг ввода. Сборки без сертификата подписи. Инструкция запуска — в README."
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*.zip --repo "$GITHUB_REPOSITORY" --title "Human Typer $GITHUB_REF_NAME" --notes-file docs/RELEASE.md
